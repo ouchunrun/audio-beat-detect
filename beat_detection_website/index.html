@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>节拍检测</title>
+    <style>
+        html,body{
+            font-family: "Segoe UI",Segoe,Tahoma,Arial,Verdana,sans-serif;
+            background-color: rgba(34,34,34,.9);
+            overflow: hidden;
+            width: 100%;
+            height: 100%;
+        }
+        .operation{
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%,-50%);
+        }
+        button{
+            width: 150px;
+            height: 50px;
+            font-size: large;
+            background: blue;
+            border: aliceblue;
+            border-radius: 7px;
+            color: aliceblue;
+        }
+    </style>
+</head>
+<body class="color-wrapper">
+
+<div class="operation">
+    <button class="start" onclick="handleStartButton()">start Detection</button>
+    <button class="stop" onclick="handleStopButton()">stop Detection</button>
+</div>
+
+<script>
+    // Declare constants to use for how often to call getAmplitudeData
+    const RATE = 48000;
+    const CHUNK_SIZE = 1024;
+    let micNode;
+    let collectionNode;
+    let fftNode;
+    let beatDetectionNode;
+    let mediaStream;
+    let audioContext
+    let animationFrameId
+    let isRunning = false
+
+    // Declare beat detection array. Index 0 = bass, Index 1 = clao, Index 2 = hihat
+    let beats = [false, false, false];
+
+    function useEffect1(){
+        let intervalId;
+
+        if (isRunning) {
+            // Start a periodic interval to retrieve amplitude data at a specific interval.
+            intervalId = setInterval(() => {
+                getAmplitudeData(); // Retrieve amplitude data at each interval.
+            }, (CHUNK_SIZE / RATE) * 1000);
+        }
+
+        return () => {
+            // Clean up the interval when the component unmounts or when isRunning changes.
+            clearInterval(intervalId);
+        };
+    }
+
+
+    async function handleStartButton(){
+        // If there is no audio context, create a new one and start the audio processing.
+        if (!audioContext) {
+            const context = new AudioContext();
+            audioContext = context
+            await startAudio(context);
+            context.resume();
+            getAmplitudeData(); // Retrieve initial amplitude data.
+
+            isRunning = true
+            useEffect1()
+        }
+    }
+
+    async function handleStopButton(){
+        // If there is an audio context, stop the audio processing, close the context, and reset the state.
+        if (audioContext) {
+            await stopAudio(audioContext);
+            audioContext.close();
+            audioContext = null
+            cancelAnimationFrame(animationFrameId);
+
+            isRunning = false
+            useEffect1()
+        }
+    }
+
+    const getAmplitudeData = () => {
+        const bufferLength = fftNode.frequencyBinCount;
+        const dataArray = new Float32Array(bufferLength);
+        fftNode.getFloatTimeDomainData(dataArray);
+
+        beatDetectionNode.port.postMessage(dataArray[0] !== 0 ? dataArray : false);
+    };
+
+    async function startAudio(context){
+        // Add the AudioWorklet Nodes
+        await context.audioWorklet.addModule("./src/audio-processor.js");
+        await context.audioWorklet.addModule("./src/sample-collector.js");
+
+        // Create the Stream, the mic node, the sample collector node, the fft analyser
+        // and the beat detection node
+        mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        micNode = context.createMediaStreamSource(mediaStream);
+        collectionNode = new AudioWorkletNode(context, "sample-collector");
+        fftNode = context.createAnalyser();
+        fftNode.fftSize = 256;
+        beatDetectionNode = new AudioWorkletNode(context, "beat-detector");
+
+        // Connect the nodes
+        micNode.connect(collectionNode);
+        collectionNode.connect(fftNode);
+        fftNode.connect(beatDetectionNode);
+
+        // Upon getting the detected beats, flash colors by changing the background color
+        beatDetectionNode.port.onmessage = ({ data }) => {
+            beats = data;
+            console.log('beatDetectionNode:', data)
+            if (beats[0]) {
+                document.querySelector(".color-wrapper").style.backgroundColor = "red";
+                setTimeout(() => {
+                    document.querySelector(".color-wrapper").style.backgroundColor = "black";
+                }, 5);
+            }
+
+            if (beats[1]) {
+                document.querySelector(".color-wrapper").style.backgroundColor = "blue";
+                setTimeout(() => {
+                    document.querySelector(".color-wrapper").style.backgroundColor = "black";
+                }, 10);
+            }
+
+            if (beats[2]) {
+                document.querySelector(".color-wrapper").style.backgroundColor = "pink";
+                setTimeout(() => {
+                    document.querySelector(".color-wrapper").style.backgroundColor = "black";
+                }, 2);
+            }
+        };
+    }
+
+    async function stopAudio(context){
+        // First close the Media Stream/Mic
+        try {
+            if (mediaStream) {
+                mediaStream.getAudioTracks().forEach((track) => {
+                    track.stop();
+                });
+                mediaStream = null;
+            }
+
+            // Then disconnect the nodes and clean up
+            if (micNode && collectionNode && fftNode && beatDetectionNode) {
+                micNode.disconnect();
+                collectionNode.disconnect();
+                fftNode.disconnect();
+                beatDetectionNode.disconnect();
+                micNode = null;
+                collectionNode = null;
+                fftNode = null;
+                beatDetectionNode = null;
+            }
+        } catch (error) {
+            console.log("Error stopping audio:", error);
+        }
+    }
+</script>
+</body>
+</html>
