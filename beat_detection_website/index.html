@@ -21,21 +21,76 @@
             width: 150px;
             height: 50px;
             font-size: large;
-            background: blue;
+            background: #abb3bf;
             border: aliceblue;
             border-radius: 7px;
             color: aliceblue;
+        }
+        #audioFileInput{
+            display: none;
         }
     </style>
 </head>
 <body class="color-wrapper">
 
 <div class="operation">
+   <div>
+       <input type="file" id="audioFileInput">
+   </div>
+    <button id="uploadFile">upload Audio</button>
     <button class="start" onclick="handleStartButton()">start Detection</button>
     <button class="stop" onclick="handleStopButton()">stop Detection</button>
 </div>
 
 <script>
+    /************************************************上传本地音频**************************************************/
+    let fileUpload = false
+    let uploadFileInput = document.getElementById('audioFileInput');
+    let uploadFileButton = document.getElementById('uploadFile')
+    uploadFileButton.onclick = function (){
+        uploadFileInput.click()
+    }
+
+    uploadFileInput.onchange = function (){
+        fileOnChange(this.files[0])
+    }
+
+    function fileOnChange(file){
+        fileUpload = true
+        console.log('upload file: ', file.name)
+        audioContext = new AudioContext()
+        let fileReader = new FileReader()
+        // 创建一个媒体流的节点
+        let destination = audioContext.createMediaStreamDestination()
+        // 创建一个新的MediaStreamAudioSourceNode 对象，将声音输入这个对像
+        micNode = audioContext.createMediaStreamSource(destination.stream)
+
+
+        fileReader.onload = function () {
+            console.log('fileReader.onload ....')
+            audioContext.decodeAudioData(this.result).then(async function (decodedData) {
+                console.log('decodeAudioData data:', decodedData)
+                // 创建一个新的AudioBufferSourceNode接口, 该接口可以通过AudioBuffer 对象来播放音频数据
+                let bufferSource = audioContext.createBufferSource()
+                bufferSource.buffer = decodedData
+                bufferSource.connect(destination)
+                bufferSource.start()
+
+                await startAudio(audioContext);
+                audioContext.resume();
+                getAmplitudeData(); // Retrieve initial amplitude data.
+
+                isRunning = true
+                useEffect1()
+            }, function (error) {
+                console.error('Error catch: ', error)
+            })
+        }
+
+        fileReader.readAsArrayBuffer(file)
+    }
+    /************************************************上传本地音频**************************************************/
+
     // Declare constants to use for how often to call getAmplitudeData
     const RATE = 48000;
     const CHUNK_SIZE = 1024;
@@ -110,8 +165,13 @@
 
         // Create the Stream, the mic node, the sample collector node, the fft analyser
         // and the beat detection node
-        mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        micNode = context.createMediaStreamSource(mediaStream);
+        if(!fileUpload){
+            mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            micNode = context.createMediaStreamSource(mediaStream);
+        }else {
+            console.warn('已通过上传文件获取micNode!')
+        }
+
         collectionNode = new AudioWorkletNode(context, "sample-collector");
         fftNode = context.createAnalyser();
         fftNode.fftSize = 256;
